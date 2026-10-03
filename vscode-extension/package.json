@@ -1,0 +1,58 @@
+{
+  "name": "barkly-work-log",
+  "displayName": "Barkly Work Log",
+  "description": "Automatically records VS Code workspace session start and end in the local Barkly Work Log.",
+  "version": "0.1.0",
+  "publisher": "barkly-labs-local",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "barklyWorkLog.start",
+        "title": "Barkly Work Log: Start Tracking"
+      },
+      {
+        "command": "barklyWorkLog.stop",
+        "title": "Barkly Work Log: Stop Tracking"
+      },
+      {
+        "command": "barklyWorkLog.showStatus",
+        "title": "Barkly Work Log: Show Status"
+      }
+    ],
+    "configuration": {
+      "title": "Barkly Work Log",
+      "properties": {
+        "barklyWorkLog.url": {
+          "type": "string",
+          "default": "http://127.0.0.1:8765",
+          "description": "Local Barkly Work Log server URL."
+        },
+        "barklyWorkLog.category": {
+          "type": "string",
+          "enum": [
+            "Barkly Labs",
+            "Joystick",
+            "Other"
+          ],
+          "default": "Barkly Labs",
+          "description": "Category used for automatically tracked VS Code sessions."
+        },
+        "barklyWorkLog.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start tracking when VS Code opens a workspace."
+        }
+      }
+    }
+  }
+}
