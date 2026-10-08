@@ -27,7 +27,7 @@ function config() {
   const c = vscode.workspace.getConfiguration('barklyWorkLog');
 
   return {
-    url: c.get('url', 'http://127.0.0.1:8765').replace(/\/$/, ''),
+    url: c.get('url', 'http://127.0.0.1:8766').replace(/\/$/, ''),
     category: c.get('category', 'Barkly Labs'),
     autoStart: c.get('autoStart', true)
   };

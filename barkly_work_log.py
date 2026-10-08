@@ -32,7 +32,7 @@ import sqlite3
 import webbrowser
 
 HOST = "127.0.0.1"
-PORT = 8765
+PORT = 8766
 
 DB = Path(__file__).with_name("barkly_work_log.sqlite3")
 TOKEN_FILE = Path.home() / ".barkly_work_log_token"
