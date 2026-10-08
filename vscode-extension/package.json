@@ -34,7 +34,7 @@
       "properties": {
         "barklyWorkLog.url": {
           "type": "string",
-          "default": "http://127.0.0.1:8765",
+          "default": "http://127.0.0.1:8766",
           "description": "Local Barkly Work Log server URL."
         },
         "barklyWorkLog.category": {
