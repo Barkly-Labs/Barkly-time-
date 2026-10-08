@@ -1,8 +1,9 @@
-
 const vscode = require('vscode');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const http = require('http');
+const https = require('https');
 
 let statusItem;
 let outputChannel;
@@ -45,28 +46,114 @@ function token() {
   }
 }
 
-async function request(endpoint, payload = {}) {
+/*
+ * Send a request to the Barkly Work Log server.
+ *
+ * This intentionally uses Node's built-in http/https modules instead
+ * of fetch(), because VS Code's extension host was returning:
+ *
+ *   TypeError: fetch failed
+ *
+ * The Python server is confirmed to be reachable on 127.0.0.1:8766.
+ */
+function request(endpoint, payload = {}) {
   const c = config();
 
-  const response = await fetch(`${c.url}${endpoint}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Barkly-Token': token()
-    },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(5000)
-  });
+  return new Promise((resolve, reject) => {
+    let target;
 
-  const data = await response.json();
+    try {
+      target = new URL(`${c.url}${endpoint}`);
+    } catch (_) {
+      reject(new Error(`Invalid Barkly Work Log URL: ${c.url}`));
+      return;
+    }
 
-  if (!response.ok || !data.ok) {
-    throw new Error(
-      data.error || `Logger returned HTTP ${response.status}`
+    const body = JSON.stringify(payload);
+
+    const transport =
+      target.protocol === 'https:' ? https : http;
+
+    const req = transport.request(
+      {
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port:
+          target.port ||
+          (target.protocol === 'https:' ? 443 : 80),
+        path: `${target.pathname}${target.search}`,
+        method: 'POST',
+
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'X-Barkly-Token': token()
+        },
+
+        timeout: 5000
+      },
+
+      (response) => {
+        let raw = '';
+
+        response.setEncoding('utf8');
+
+        response.on('data', (chunk) => {
+          raw += chunk;
+        });
+
+        response.on('end', () => {
+          let data;
+
+          try {
+            data = JSON.parse(raw || '{}');
+          } catch (_) {
+            reject(
+              new Error(
+                `Logger returned invalid JSON (HTTP ${response.statusCode})`
+              )
+            );
+            return;
+          }
+
+          if (
+            response.statusCode < 200 ||
+            response.statusCode >= 300 ||
+            !data.ok
+          ) {
+            reject(
+              new Error(
+                data.error ||
+                `Logger returned HTTP ${response.statusCode}`
+              )
+            );
+            return;
+          }
+
+          resolve(data);
+        });
+      }
     );
-  }
 
-  return data;
+    req.on('timeout', () => {
+      req.destroy(
+        new Error(
+          'Request to Barkly Work Log timed out.'
+        )
+      );
+    });
+
+    req.on('error', (error) => {
+      reject(
+        new Error(
+          `Could not connect to Barkly Work Log at ${c.url}: ${error.message}`
+        )
+      );
+    });
+
+    req.write(body);
+    req.end();
+  });
 }
 
 function updateStatus(text) {
@@ -109,7 +196,9 @@ async function start(showMessage = false) {
     updateStatus('offline');
 
     if (outputChannel) {
-      outputChannel.appendLine(`Start failed: ${error.stack || error.message}`);
+      outputChannel.appendLine(
+        `Start failed: ${error.stack || error.message}`
+      );
     }
 
     vscode.window.showWarningMessage(
@@ -127,7 +216,11 @@ function askPick(title, placeholder, items, options = {}) {
   });
 }
 
-function askText(title, prompt, placeHolder = 'Optional — press Enter to continue') {
+function askText(
+  title,
+  prompt,
+  placeHolder = 'Optional — press Enter to continue'
+) {
   return vscode.window.showInputBox({
     title,
     prompt,
@@ -155,8 +248,13 @@ function durationToSeconds(value) {
         const number = Number(match[1]);
         const unit = match[2];
 
-        if (unit.startsWith('h')) return total + number * 3600;
-        if (unit.startsWith('m')) return total + number * 60;
+        if (unit.startsWith('h')) {
+          return total + number * 3600;
+        }
+
+        if (unit.startsWith('m')) {
+          return total + number * 60;
+        }
 
         return total + number;
       }, 0)
@@ -201,6 +299,7 @@ async function collectSessionReport() {
     vscode.window.showWarningMessage(
       'Enter active time like "45m", "1h 30m", or "90".'
     );
+
     return collectSessionReport();
   }
 
@@ -218,6 +317,7 @@ async function collectSessionReport() {
     vscode.window.showWarningMessage(
       'Enter break time like "20m" or "1h", or leave it blank.'
     );
+
     return collectSessionReport();
   }
 
@@ -229,12 +329,16 @@ async function collectSessionReport() {
 
   if (breaksText === undefined) return null;
 
-  const breaks = breaksText.trim() === '' ? 0 : Number(breaksText);
+  const breaks =
+    breaksText.trim() === ''
+      ? 0
+      : Number(breaksText);
 
   if (!Number.isInteger(breaks) || breaks < 0) {
     vscode.window.showWarningMessage(
       'Enter a whole number of breaks, such as 0, 1, or 3.'
     );
+
     return collectSessionReport();
   }
 
@@ -251,7 +355,9 @@ async function collectSessionReport() {
       'Needed extra breaks',
       'No notable symptoms'
     ],
-    { canPickMany: true }
+    {
+      canPickMany: true
+    }
   );
 
   if (symptoms === undefined) return null;
@@ -319,12 +425,18 @@ async function collectSessionReport() {
     `Estimated break time: ${breakTime.trim() || '0'}`,
     `Number of breaks: ${breaks}`,
     `Symptoms / limitations: ${
-      symptomsList.length ? symptomsList.join(', ') : 'Not recorded'
+      symptomsList.length
+        ? symptomsList.join(', ')
+        : 'Not recorded'
     }`,
     `Could continue: ${continuation}`,
     `Recovery needed: ${recovery}`,
-    `Work completed / unfinished / waiting: ${outcome.trim() || 'Not recorded'}`,
-    `Support / interruptions / context: ${support.trim() || 'Not recorded'}`,
+    `Work completed / unfinished / waiting: ${
+      outcome.trim() || 'Not recorded'
+    }`,
+    `Support / interruptions / context: ${
+      support.trim() || 'Not recorded'
+    }`,
     `Additional notes: ${extraNotes.trim() || 'None'}`
   ].join('\n');
 
@@ -338,7 +450,10 @@ async function collectSessionReport() {
   };
 }
 
-async function stop(showMessage = false, collectEffects = true) {
+async function stop(
+  showMessage = false,
+  collectEffects = true
+) {
   let effects = {};
 
   if (collectEffects) {
@@ -351,7 +466,10 @@ async function stop(showMessage = false, collectEffects = true) {
   }
 
   try {
-    const result = await request('/vscode/stop', effects);
+    const result = await request(
+      '/vscode/stop',
+      effects
+    );
 
     hasStartedThisWindow = false;
     updateStatus('not tracking');
@@ -367,7 +485,9 @@ async function stop(showMessage = false, collectEffects = true) {
     updateStatus('stop failed');
 
     if (outputChannel) {
-      outputChannel.appendLine(`Stop failed: ${error.stack || error.message}`);
+      outputChannel.appendLine(
+        `Stop failed: ${error.stack || error.message}`
+      );
     }
 
     vscode.window.showWarningMessage(
@@ -377,17 +497,29 @@ async function stop(showMessage = false, collectEffects = true) {
 }
 
 function activate(context) {
-  outputChannel = vscode.window.createOutputChannel('Barkly Work Log');
-  context.subscriptions.push(outputChannel);
-  outputChannel.appendLine('Barkly Work Log extension activated.');
+  outputChannel =
+    vscode.window.createOutputChannel(
+      'Barkly Work Log'
+    );
 
-  statusItem = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Left,
-    10
+  context.subscriptions.push(outputChannel);
+
+  outputChannel.appendLine(
+    'Barkly Work Log extension activated.'
   );
 
-  statusItem.command = 'barklyWorkLog.showStatus';
-  statusItem.tooltip = 'Click to view Barkly Work Log tracking status';
+  statusItem =
+    vscode.window.createStatusBarItem(
+      vscode.StatusBarAlignment.Left,
+      10
+    );
+
+  statusItem.command =
+    'barklyWorkLog.showStatus';
+
+  statusItem.tooltip =
+    'Click to view Barkly Work Log tracking status';
+
   statusItem.show();
 
   context.subscriptions.push(statusItem);
@@ -410,34 +542,50 @@ function activate(context) {
     vscode.commands.registerCommand(
       'barklyWorkLog.showStatus',
       async () => {
-        const choice = await vscode.window.showQuickPick(
-          [
-            'Start tracking',
-            'Stop tracking and check in',
-            'Open Barkly Work Log'
-          ],
-          { placeHolder: 'Barkly Work Log' }
-        );
+        const choice =
+          await vscode.window.showQuickPick(
+            [
+              'Start tracking',
+              'Stop tracking and check in',
+              'Open Barkly Work Log'
+            ],
+            {
+              placeHolder:
+                'Barkly Work Log'
+            }
+          );
 
         if (choice === 'Start tracking') {
           await start(true);
-        } else if (choice === 'Stop tracking and check in') {
+        } else if (
+          choice ===
+          'Stop tracking and check in'
+        ) {
           await stop(true, true);
-        } else if (choice === 'Open Barkly Work Log') {
-          vscode.env.openExternal(vscode.Uri.parse(config().url));
+        } else if (
+          choice ===
+          'Open Barkly Work Log'
+        ) {
+          vscode.env.openExternal(
+            vscode.Uri.parse(config().url)
+          );
         }
       }
     )
   );
 
-  if (config().autoStart && vscode.workspace.workspaceFolders?.length) {
+  if (
+    config().autoStart &&
+    vscode.workspace.workspaceFolders?.length
+  ) {
     start(false);
   }
 }
 
 async function deactivate() {
   // Do not show interactive prompts during shutdown.
-  // Save neutral defaults and explicitly note that no detailed check-in occurred.
+  // Save neutral defaults and explicitly note that
+  // no detailed check-in occurred.
   if (hasStartedThisWindow) {
     try {
       await request('/vscode/stop', {
@@ -457,4 +605,7 @@ async function deactivate() {
   }
 }
 
-module.exports = { activate, deactivate };
+module.exports = {
+  activate,
+  deactivate
+};
